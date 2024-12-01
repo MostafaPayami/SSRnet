@@ -11,7 +11,7 @@ The MATLAB codes for simulating MIMO-OTFS systems, have been written by the auth
 The following software and libraries are required:
 1) TensorFlow: Version 2.18 or later
 2) Python: Version 3.12 or later
-3) MATLAB: Version R2015 or later
+3) MATLAB: Version R2014b or later
 
 ***************************************************************************************************
 
