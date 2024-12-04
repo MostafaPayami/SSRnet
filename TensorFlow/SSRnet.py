@@ -6,7 +6,7 @@ import numpy as np
 import scipy.io as sio
 import matplotlib.pyplot as plt
 
-Nt = 4             # Number of transmit antennas
+Nt = 16            # Number of transmit antennas
 Nfft = 1024        # FFT size of base modem
 M = 600            # OTFS frame length (delay)
 N = 10             # OTFS frame length (Doppler)
@@ -38,11 +38,11 @@ learning_rate_schedule = tf.keras.callbacks.LearningRateScheduler(learning_rate_
 ### TensorFlow/Keras Custom Functions and Layers ###
 
 def log_NMSE(y_true, y_pred):
-    Dy2 = tf.math.square(y_true - y_pred)
-    mse = tf.math.reduce_sum(Dy2, axis=(1, 2, 3, 4))
+    Dy  = tf.math.square(y_true - y_pred)
+    mse = tf.math.reduce_sum(Dy, axis=(1, 2, 3, 4))
     L2norm = tf.math.reduce_sum(tf.math.square(y_true), axis=(1, 2, 3, 4))
     nmse = mse / L2norm
-    log_nmse = tf.math.log(nmse + 1e-12)
+    log_nmse = tf.math.log(nmse + 1e-7)
     return log_nmse
 
 def Weighted_Binary_CrossEntropy(y_true, y_pred):
@@ -53,9 +53,9 @@ def Weighted_Binary_CrossEntropy(y_true, y_pred):
 def pseudo_inverse(A, rcond=1e-6):
     # Moore-Penrose pseudo-inverse based on Singular Value Decomposition (SVD)
     S, U, V = tf.linalg.svd(A)
-    S_pinv  = tf.where(S > rcond * Mt * Nv , 1.0 / S, 0.0)         # Reciprocal of non-zero singular values
+    S_pinv  = tf.where(S > rcond * Mt * Nv , 1.0 / S, 0.0)   # Reciprocal of non-zero singular values
     S_pinv  = tf.linalg.diag(tf.cast(S_pinv, tf.complex64))
-    A_pinv  = tf.linalg.matmul(V, tf.linalg.matmul(S_pinv, U, adjoint_b=True))   
+    A_pinv  = tf.linalg.matmul(V, tf.linalg.matmul(S_pinv, U, adjoint_b=True))
     return A_pinv
 
 class Permute_and_Negate_Layer(tf.keras.layers.Layer):
@@ -68,41 +68,55 @@ class Permute_and_Negate_Layer(tf.keras.layers.Layer):
 
 ### PositionNet+ Post-Processsing ###
 
-PositionNet = tf.keras.models.load_model("PositionNetPlus.keras", 
-                                         custom_objects={"Permute_and_Negate_Layer": Permute_and_Negate_Layer, 
-                                                         "Weighted_Binary_CrossEntropy": Weighted_Binary_CrossEntropy}, 
-                                         compile=False, 
+PositionNet = tf.keras.models.load_model("PositionNetPlus.keras",
+                                         custom_objects={"Permute_and_Negate_Layer": Permute_and_Negate_Layer,
+                                                         "Weighted_Binary_CrossEntropy": Weighted_Binary_CrossEntropy},
+                                         compile=False,
                                          safe_mode=False)
 PositionNet.trainable = False
 
-I = PositionNet.predict(yDD)                                   # Estimated Support of 3D Sparse Channel Matrix (Delay dimension)
-I = tf.math.round(I)                                           # Sparse zero-one vector (Delay dimension)
-M_Delay, index_Delay = tf.math.top_k(I, k=K)                   # Non-zero elements (Delay dimension)
-index_expan = tf.range(Nv*Nt, dtype=tf.int32) * Mt
-index_expan = tf.repeat(index_expan, [K])
-index = tf.tile(index_Delay, [1, Nv*Nt]) + index_expan
-M = tf.tile(M_Delay, [1, Nv*Nt])
-M = tf.expand_dims(M, axis=1)
-Phi_I = tf.gather(Phi, index, axis=1)                           # Selecting culomns of sensing matrix according to support
-Phi_I = tf.transpose(Phi_I, perm=[1, 0, 2])                     # shape = (N_samples, Mt*Nv, K*Nv*Nt)
-Phi_I = Phi_I * tf.complex(M, tf.zeros_like(M))
+class Post_Processing_Layer(tf.keras.layers.Layer):
+    def __init__(self, **kwargs):
+        super(Post_Processing_Layer, self).__init__(**kwargs)
 
-# Phi_pinv = pseudo_inverse(Phi_I)                                # Moore-Penrose pseudo-inverse
-Phi_pinv = np.linalg.pinv(Phi_I)                                # Moore-Penrose pseudo-inverse
+    def call(self, inputs):
+        Support, yDD = inputs
+        I = tf.math.round(Support)                                      # Sparse zero-one vector (Delay dimension)
+        M_Delay, index_Delay = tf.math.top_k(I, k=K)                    # Nonzero indices along the delay dimension
+        index_expan = tf.range(Nv * Nt, dtype=tf.int32) * Mt
+        index_expan = tf.repeat(index_expan, [K])
+        index = tf.tile(index_Delay, [1, Nv*Nt]) + index_expan
+        M = tf.tile(M_Delay, [1, Nv*Nt])
+        M = tf.expand_dims(M, axis=1)
+        Phi_I = tf.gather(Phi, index, axis=1)                           # Collect culomns of sensing matrix according to the support
+        Phi_I = tf.transpose(Phi_I, perm=[1, 0, 2])                   
+        Phi_I = tf.math.multiply(Phi_I, tf.complex(M, tf.zeros_like(M)))
+        yDDx = tf.expand_dims(tf.complex(yDD[:, 0, :], yDD[:, 1, :]), axis=-1)
+        N_batch = tf.shape(Support)[0]
 
-N_samples = tf.shape(yDD)[0]
-yDD_complex = tf.complex(yDD[:, 0, :], yDD[:, 1, :])
-h_ADD = tf.linalg.matvec(Phi_pinv, yDD_complex)                 # Least Squares (LS) solution
-h_ADD = tf.reshape(h_ADD, [N_samples, Nt, Nv, K])               # Reshape to a 3D dense tensor
-h_ADD = tf.transpose(h_ADD, perm=[0, 3, 2, 1])
+        # Phi_pinv = pseudo_inverse(Phi_I)                                # Moore-Penrose pseudo-inverse
+        # h_ADD = tf.linalg.matmul(Phi_pinv, yDDx)                        # Least Squares (LS) solution        
+        h_ADD = tf.linalg.lstsq(Phi_I, yDDx, l2_regularizer=1e-6)       # Least Squares (LS) solution
+        h_ADD = tf.reshape(h_ADD, [N_batch, Nt, Nv, K])                 # Reshape to a 3D dense tensor
+        h_ADD = tf.transpose(h_ADD, perm=[0, 3, 2, 1])
+      
+        index_3D = tf.expand_dims(index_Delay, axis=-1)                 
+        index_batch = tf.range(tf.shape(index_3D)[0])[:, tf.newaxis, tf.newaxis]
+        index_batch = tf.tile(index_batch, [1, K, 1])
+        index_3D = tf.stack([index_batch, index_3D], axis=-1)
+        index_3D = tf.reshape(index_3D, [N_batch, K, 2])                # Nonzero indices of 3D sparse channel matrix  
+        
+        HDD_real = tf.scatter_nd(index_3D, tf.math.real(h_ADD), [N_batch, Mt, Nv, Nt])   # Scatter into the 3D sparse channel tensor
+        HDD_imag = tf.scatter_nd(index_3D, tf.math.imag(h_ADD), [N_batch, Mt, Nv, Nt])
+        return HDD_real, HDD_imag
 
-index_3D = tf.expand_dims(index_Delay, axis=1)
-index_Samples = tf.range(index_3D.shape[0])[:, tf.newaxis, tf.newaxis]
-index_Samples = tf.broadcast_to(index_Samples, index_3D.shape)
-index_3D = tf.stack([index_Samples, index_3D], axis=-1)
-index_3D = tf.reshape(index_3D, [N_samples, K, 2])                # Non-zero indices of 3D sparse matrix
-H_real = tf.scatter_nd(index_3D, tf.math.real(h_ADD), [N_samples, Mt, Nv, Nt])   # Scattering into a 3D sparse channel matrix
-H_imag = tf.scatter_nd(index_3D, tf.math.imag(h_ADD), [N_samples, Mt, Nv, Nt])
+HDD_real, HDD_imag = Post_Processing_Layer()([PositionNet.output, PositionNet.input])    # Post-Processing Layer
+
+# PositionNet+ Model with Post-Processing
+PositionNet_Post_Processing = tf.keras.models.Model(PositionNet.input, [HDD_real, HDD_imag])
+PositionNet_Post_Processing.summary()
+
+HDD_real_train, HDD_imag_train = PositionNet_Post_Processing.predict(yDD_train)          # Inference
 
 ### SSRnet ###
 
@@ -129,7 +143,7 @@ HDD_OTFSr = Conv3d_Block(HDD_OTFSr, Nc)
 HDD_OTFSr = Conv3d_Block(HDD_OTFSr, Nc)
 HDD_OTFSr = Conv3d_Block(HDD_OTFSr, Nc)
 HDD_OTFSr = tf.keras.layers.Conv3D(1, (3, 3, 3), padding='same')(HDD_OTFSr)
-H_ADD_real = tf.keras.layers.Subtract()([HDD_real, HDD_OTFSr])
+CH_ADD_real = tf.keras.layers.Subtract()([HDD_real, HDD_OTFSr])
 
 # Imaginary part of 3D channel matrix
 HDD_OTFSi = Conv3d_Block(HDD_imag,  Nc)
@@ -144,12 +158,12 @@ HDD_OTFSi = Conv3d_Block(HDD_OTFSi, Nc)
 HDD_OTFSi = Conv3d_Block(HDD_OTFSi, Nc)
 HDD_OTFSi = Conv3d_Block(HDD_OTFSi, Nc)
 HDD_OTFSi = tf.keras.layers.Conv3D(1, (3, 3, 3), padding='same')(HDD_OTFSi)
-H_ADD_imag = tf.keras.layers.Subtract()([HDD_imag, HDD_OTFSi])
+CH_ADD_imag = tf.keras.layers.Subtract()([HDD_imag, HDD_OTFSi])
 
 # 3D sparse channel matrix
-H_ADD = tf.keras.layers.Concatenate(axis=-1)([H_ADD_real, H_ADD_imag])
+CH_ADD = tf.keras.layers.Concatenate(axis=-1)([CH_ADD_real, CH_ADD_imag])
 
-SSRnet = tf.keras.models.Model([HDD_real, HDD_imag], H_ADD)
+SSRnet = tf.keras.models.Model([HDD_real, HDD_imag], CH_ADD)
 
 SSRnet.summary()
 
@@ -157,7 +171,7 @@ SSRnet.compile(optimizer=tf.keras.optimizers.AdamW(),
               loss=[log_NMSE],
               metrics=['mse'])
 
-SSRnet_history = SSRnet.fit([H_real, H_imag], CH_ADD_train, validation_split=0.20, epochs=15, callbacks=[learning_rate_schedule])
+SSRnet_history = SSRnet.fit([HDD_real_train, HDD_imag_train], CH_ADD_train, validation_split=0.20, epochs=15, callbacks=[learning_rate_schedule])
 
 SSRnet.save("SSRnet.keras")
 
