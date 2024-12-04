@@ -112,7 +112,7 @@ class Post_Processing_Layer(tf.keras.layers.Layer):
 
 HDD_real, HDD_imag = Post_Processing_Layer()([PositionNet.output, PositionNet.input])    # Post-Processing Layer
 
-# PositionNet+ Model with Post-Processing
+# PositionNet+ with Post-Processing Model
 PositionNet_Post_Processing = tf.keras.models.Model(PositionNet.input, [HDD_real, HDD_imag])
 PositionNet_Post_Processing.summary()
 
