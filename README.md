@@ -2,9 +2,11 @@ The Python and MATLAB codes have been used for the experiments and results prese
 
 [1] M. Payami, and S. D. Blostein, “Sparse Signal Recovery Neural Network with Application to High-Mobility Massive MIMO-OTFS Communication Systems” submitted to IEEE Trans. Veh. Tech., 2024.
 
-The Python codes are TensorFlow/Keras models for PositionNet+ and SSRnet. These codes have been written by the authors of [1]. 
+The Python codes are TensorFlow/Keras models for PositionNet+ and SSRnet. These codes are written by the authors of [1]. 
 
-The MATLAB codes for simulating MIMO-OTFS systems, have been written by the authors of the following paper [2]. If you use this MATLAB code package, please cite [2]:
+The MATLAB codes for simulating MIMO-OTFS systems, have been written by the authors of the following paper [2] downloaded from the following website: 
+https://oa.ee.tsinghua.edu.cn/dailinglong/
+If you use this MATLAB code package, please cite [2]:
 
 [2] W. Shen, L. Dai, J. An, P. Fan, and R. W. Heath, “Channel estimation for orthogonal time frequency space (OTFS) massive MIMO”, IEEE Trans. Signal Process., 2019.
 
