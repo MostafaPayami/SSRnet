@@ -8,14 +8,16 @@ import matplotlib.pyplot as plt
 
 Nt = 16            # Number of transmit antennas
 Nfft = 1024        # FFT size of base modem
-M = 600            # OTFS frame length (delay)
-N = 10             # OTFS frame length (Doppler)
-eta = 0.20         # Pilot overhead
-K = 6              # Sparsity
-Mt = 128           # Number of pilots along delay dimension
+M  = 600           # OTFS frame length (delay)
+N  = 10            # OTFS frame length (Doppler)
+eta = 0.15         # Pilot overhead
+K  = 6             # Sparsity
+Mt = 96            # Number of pilots along delay dimension
 Nv = 10            # Number of pilots along Doppler dimension
-Nc = 64            # Number of filters (feature maps)
-alpha = 0.9        # Binary Cross-Entropy weight
+Nc = 32            # Number of filters (feature maps)
+Nf = 32            # Number of filters (feature maps)
+NL = 12            # Number of Learned ISP-SL0 layers
+alpha = 0.8        # Binary Cross-Entropy weight
 
 ### Loading Dataset ###
 
@@ -23,12 +25,28 @@ yDD = sio.loadmat('yDD_Nt64_0p20.mat')['yDD']                  # Delay-Doppler d
 Phi = sio.loadmat('Phi_Nt64_0p20.mat')['Phi']                  # Sensing matrix
 CH_ADD_train = sio.loadmat('CH_ADD_Nt64_0p20.mat')['CH_ADD']   # Delay-Doppler domain 3D sparse channel matrix
 
+
+A        = tf.constant(Phi, dtype=tf.complex64)
+A_AH     = tf.linalg.matmul(A, A, adjoint_b=True) + (0.0001 + 0.0j) * tf.eye(Mt*Nv, dtype=tf.complex64)
+A_AH_inv = tf.linalg.inv(A_AH)
+A_pinv   = tf.linalg.matmul(A, A_AH_inv, adjoint_a=True)
+# A_pinv   = tf.constant(np.linalg.pinv(A), dtype=tf.complex64)
+
+Ar = tf.math.real(A)
+Ai = tf.math.imag(A)
+A  = tf.concat([tf.concat([Ar, -Ai], axis=-1),
+                tf.concat([Ai,  Ar], axis=-1)], axis=0)    # Equivalent real-valued processing
+Apinv_r = tf.math.real(A_pinv)
+Apinv_i = tf.math.imag(A_pinv)
+A_pinv  = tf.concat([tf.concat([Apinv_r, -Apinv_i], axis=-1),
+                     tf.concat([Apinv_i,  Apinv_r], axis=-1)], axis=0)
+
 ### Learning Rate Schedule ###
 
 def learning_rate_scheduler(epoch):
-    if epoch < 10:
+    if epoch < 12:
         return 1e-3
-    elif epoch < 12:
+    elif epoch < 14:
         return 1e-4
     else:
         return 1e-5
@@ -50,14 +68,6 @@ def Weighted_Binary_CrossEntropy(y_true, y_pred):
     WBCE   = -tf.math.reduce_mean(alpha * y_true * tf.math.log(y_pred) + (1.0 - alpha) * (1 - y_true) * tf.math.log(1 - y_pred))
     return WBCE
 
-def pseudo_inverse(A, rcond=1e-6):
-    # Moore-Penrose pseudo-inverse based on Singular Value Decomposition (SVD)
-    S, U, V = tf.linalg.svd(A)
-    S_pinv  = tf.where(S > rcond * Mt * Nv , 1.0 / S, 0.0)   # Reciprocal of non-zero singular values
-    S_pinv  = tf.linalg.diag(tf.cast(S_pinv, tf.complex64))
-    A_pinv  = tf.linalg.matmul(V, tf.linalg.matmul(S_pinv, U, adjoint_b=True))
-    return A_pinv
-
 class Permute_and_Negate_Layer(tf.keras.layers.Layer):
     def __init__(self, **kwargs):
         super(Permute_and_Negate_Layer, self).__init__(**kwargs)
@@ -66,112 +76,209 @@ class Permute_and_Negate_Layer(tf.keras.layers.Layer):
         y = tf.concat([permuted[:, 0:1, :] * -1, permuted[:, 1:, :]], axis=1)
         return y
 
-### PositionNet+ Post-Processsing ###
+### PositionNet+ ###
 
-PositionNet = tf.keras.models.load_model("PositionNetPlus.keras",
-                                         custom_objects={"Permute_and_Negate_Layer": Permute_and_Negate_Layer,
-                                                         "Weighted_Binary_CrossEntropy": Weighted_Binary_CrossEntropy},
+# Model's Input
+yDD = tf.keras.Input(shape=(2, Mt*Nv))         # Delay-Doppler domain Observation Vector
+
+yDDr = tf.keras.layers.Reshape((2, Mt*Nv, 1))(yDD)
+yDDr = tf.keras.layers.Conv2D(Nc, (3, 3), padding='same')(yDDr)
+yDDr = tf.keras.layers.LeakyReLU(negative_slope=0.1)(yDDr)
+yDDr = tf.keras.layers.LayerNormalization()(yDDr)
+yDDr = tf.keras.layers.Conv2D(Nc, (3, 3), padding='same')(yDDr)
+yDDr = tf.keras.layers.LeakyReLU(negative_slope=0.1)(yDDr)
+yDDr = tf.keras.layers.LayerNormalization()(yDDr)
+yDDr = tf.keras.layers.Conv2D(Nc, (3, 3), padding='same')(yDDr)
+yDDr = tf.keras.layers.LeakyReLU(negative_slope=0.1)(yDDr)
+yDDr = tf.keras.layers.LayerNormalization()(yDDr)
+yDDr = tf.keras.layers.Dense(Nc)(yDDr)
+yDDr = tf.keras.layers.BatchNormalization()(yDDr)
+yDDr = tf.keras.layers.Dense(1)(yDDr)
+yDDr = tf.keras.layers.Reshape((2, Mt*Nv))(yDDr)
+
+yDDi = Permute_and_Negate_Layer()(yDD)
+yDDi = tf.keras.layers.Reshape((2, Mt*Nv, 1))(yDDi)
+yDDi = tf.keras.layers.Conv2D(Nc, (3, 3), padding='same')(yDDi)
+yDDi = tf.keras.layers.LeakyReLU(negative_slope=0.1)(yDDi)
+yDDi = tf.keras.layers.LayerNormalization()(yDDi)
+yDDi = tf.keras.layers.Conv2D(Nc, (3, 3), padding='same')(yDDi)
+yDDi = tf.keras.layers.LeakyReLU(negative_slope=0.1)(yDDi)
+yDDi = tf.keras.layers.LayerNormalization()(yDDi)
+yDDi = tf.keras.layers.Conv2D(Nc, (3, 3), padding='same')(yDDi)
+yDDi = tf.keras.layers.LeakyReLU(negative_slope=0.1)(yDDi)
+yDDi = tf.keras.layers.LayerNormalization()(yDDi)
+yDDi = tf.keras.layers.Dense(Nc)(yDDi)
+yDDi = tf.keras.layers.BatchNormalization()(yDDi)
+yDDi = tf.keras.layers.Dense(1)(yDDi)
+yDDi = tf.keras.layers.Reshape((2, Mt*Nv))(yDDi)
+
+# Feature Extraction (Support Recovery)
+F11 = tf.keras.layers.Dense(Mt*Nv*Nt)(yDDr)               # Complex Dense layer
+F11 = tf.keras.layers.Dropout(0.25)(F11)
+F21 = tf.keras.layers.Dense(Mt*Nv*Nt)(yDDi)
+F21 = tf.keras.layers.Dropout(0.25)(F21)
+F1  = tf.keras.layers.Add()([F11, F21])
+Feature = tf.keras.ops.abs(F1)                            # Absolute Value layer
+Feature = tf.keras.layers.AveragePooling1D(pool_size=(2))(Feature)
+Feature = tf.keras.layers.Reshape((Mt, Nv, Nt, 1))(Feature)
+Feature = tf.keras.layers.Conv3D(Nc, (3, 3, 3), padding='same')(Feature)
+Feature = tf.keras.layers.Conv3D(Nc, (3, 3, 3), padding='same')(Feature)
+Feature = tf.keras.layers.Conv3D(Nc, (3, 3, 3), padding='same')(Feature)
+Feature = tf.keras.layers.LayerNormalization()(Feature)
+Feature = tf.keras.layers.BatchNormalization(axis=1)(Feature)
+Feature = tf.keras.layers.Rescaling(2.5, offset=0)(Feature)
+
+Position = tf.keras.layers.Softmax(axis=1)(Feature)    # Softmax layer
+
+Position = tf.keras.layers.Dense(Nc)(Position)
+Position = tf.keras.layers.Dense(1)(Position)
+Position = tf.keras.layers.Reshape((Mt, Nv, Nt))(Position)
+Position = tf.keras.layers.Dense(Nc)(Position)
+Position = tf.keras.layers.Dense(1)(Position)
+Position = tf.keras.layers.Reshape((Mt, Nv))(Position)
+Position = tf.keras.layers.Dense(Nc)(Position)
+Position = tf.keras.layers.Dense(1, activation="sigmoid")(Position)
+# Position = tf.keras.layers.Dense(1)(Position)
+# Position = tf.keras.layers.Reshape((Mt,))(Position)
+# Position = tf.keras.layers.Rescaling(5.0, offset=0.0)(Position)        # Making sigmoid function sharp
+# Position = tf.keras.activations.sigmoid(Position)
+
+PositionNetPlus = tf.keras.models.Model(yDD, Position)
+
+PositionNetPlus.summary()
+
+PositionNetPlus.compile(optimizer=tf.keras.optimizers.AdamW(),
+                        loss=[tf.keras.losses.CosineSimilarity()],   # Weighted_Binary_CrossEntropy
+                        metrics=['mse'])  # tf.keras.metrics.BinaryCrossentropy()
+
+PN_history = PositionNetPlus.fit(yDD_train, Position_train, validation_split=0.20,
+                                 epochs=15, callbacks=[learning_rate_schedule])
+
+PositionNetPlus.save("PositionNetPlus.keras")
+
+### PositionNet+ with Learned ISP-SL0 ###
+
+PositionNetPlus = tf.keras.models.load_model("PositionNetPlus.keras",
+                                         custom_objects={"Permute_and_Negate_Layer": Permute_and_Negate_Layer},
                                          compile=False,
                                          safe_mode=False)
-PositionNet.trainable = False
+PositionNetPlus.trainable = False
 
-class Post_Processing_Layer(tf.keras.layers.Layer):
+### Learned ISP-SL0 ###
+
+class Initial_Sprase_H_ADD_Layer(tf.keras.layers.Layer):
     def __init__(self, **kwargs):
-        super(Post_Processing_Layer, self).__init__(**kwargs)
+        super(Initial_Sprase_H_ADD_Layer, self).__init__(**kwargs)
+    def call(self, inputs):
+        I, y = inputs
+        I  = tf.math.round(I)                  # Sparse zero-one vector (Delay dimension)
+        I  = tf.tile(I, [1, Nv*Nt*2, 1])       # Nonzero indices along Delay-Doppler-Spatial dimensions
+        x0 = tf.linalg.matmul(A_pinv, y) * I   # Initial sparse vector h_ADD
+        return x0
+
+# Learned Iterative Sparsification-Projection with Smoothed L0 Norm
+class Learned_ISP_SL0_Layer(tf.keras.layers.Layer):
+    def __init__(self, **kwargs):
+        super(Learned_ISP_SL0_Layer, self).__init__(**kwargs)
+
+    def build(self, input_shape):
+        self.a1w   = self.add_weight(shape=(), initializer="ones",  trainable=True)   # Sparsification parameter
+        # self.a2w   = self.add_weight(shape=(), initializer="ones",  trainable=True)   # Sparsification parameter
+        self.a3w   = self.add_weight(shape=(), initializer="ones",  trainable=True)   # Sparsification parameter
+        self.beta  = self.add_weight(shape=(), initializer="zeros", trainable=True)   # Nesterov's Acceleration
+        self.alpha = self.add_weight(shape=(), initializer="zeros", trainable=True)   # Step size
+        super(Learned_ISP_SL0_Layer, self).build(input_shape)
+
+    def Exponential_Shrinkage(self, z):
+        a1 = tf.nn.relu(self.a1w)
+        # a2 = tf.nn.relu(self.a2w)
+        a3 = tf.nn.relu(self.a3w) * 0.001 + 1e-6
+        z  = tf.reshape(z, shape=(-1, 2, Mt*Nv*Nt))
+        r  = tf.math.reduce_sum(tf.math.square(z), axis=1, keepdims=True)
+        fz = z * (a1 - a1 * tf.math.exp(-r / (a3 ** 2)))
+        fz = tf.reshape(fz, shape=(-1, Mt*Nv*Nt*2, 1))
+        return fz
 
     def call(self, inputs):
-        Support, yDD = inputs
-        I = tf.math.round(Support)                                      # Sparse zero-one vector (Delay dimension)
-        M_Delay, index_Delay = tf.math.top_k(I, k=K)                    # Nonzero indices along the delay dimension
-        index_expan = tf.range(Nv * Nt, dtype=tf.int32) * Mt
-        index_expan = tf.repeat(index_expan, [K])
-        index = tf.tile(index_Delay, [1, Nv*Nt]) + index_expan
-        M = tf.tile(M_Delay, [1, Nv*Nt])
-        M = tf.expand_dims(M, axis=1)
-        Phi_I = tf.gather(Phi, index, axis=1)                           # Collect culomns of sensing matrix according to the support
-        Phi_I = tf.transpose(Phi_I, perm=[1, 0, 2])                   
-        Phi_I = tf.math.multiply(Phi_I, tf.complex(M, tf.zeros_like(M)))
-        yDDx = tf.expand_dims(tf.complex(yDD[:, 0, :], yDD[:, 1, :]), axis=-1)
-        N_batch = tf.shape(Support)[0]
+        x, x0, y = inputs
+        w  = tf.math.sigmoid(self.beta)  * 2            # Nesterov's Acceleration
+        m  = tf.math.sigmoid(self.alpha) * 2            # Step size
+        s  = x + w * (x - x0)                           # Momentum
+        x0 = x
+        x  = self.Exponential_Shrinkage(s)              # Sparsification
+        Ax = tf.linalg.matmul(A, x)
+        x  = x - m * tf.linalg.matmul(A_pinv, Ax - y)   # Projection
+        return [x, x0]
 
-        # Phi_pinv = pseudo_inverse(Phi_I)                                # Moore-Penrose pseudo-inverse
-        # h_ADD = tf.linalg.matmul(Phi_pinv, yDDx)                        # Least Squares (LS) solution        
-        h_ADD = tf.linalg.lstsq(Phi_I, yDDx, l2_regularizer=1e-6)       # Least Squares (LS) solution
-        h_ADD = tf.reshape(h_ADD, [N_batch, Nt, Nv, K])                 # Reshape to a 3D dense tensor
-        h_ADD = tf.transpose(h_ADD, perm=[0, 3, 2, 1])
-      
-        index_3D = tf.expand_dims(index_Delay, axis=-1)                 
-        index_batch = tf.range(tf.shape(index_3D)[0])[:, tf.newaxis, tf.newaxis]
-        index_batch = tf.tile(index_batch, [1, K, 1])
-        index_3D = tf.stack([index_batch, index_3D], axis=-1)
-        index_3D = tf.reshape(index_3D, [N_batch, K, 2])                # Nonzero indices of 3D sparse channel matrix  
-        
-        HDD_real = tf.scatter_nd(index_3D, tf.math.real(h_ADD), [N_batch, Mt, Nv, Nt])   # Scatter into the 3D sparse channel tensor
-        HDD_imag = tf.scatter_nd(index_3D, tf.math.imag(h_ADD), [N_batch, Mt, Nv, Nt])
-        return HDD_real, HDD_imag
-
-HDD_real, HDD_imag = Post_Processing_Layer()([PositionNet.output, PositionNet.input])    # Post-Processing Layer
-
-# PositionNet+ with Post-Processing Model
-PositionNet_Post_Processing = tf.keras.models.Model(PositionNet.input, [HDD_real, HDD_imag])
-PositionNet_Post_Processing.summary()
-
-HDD_real_train, HDD_imag_train = PositionNet_Post_Processing.predict(yDD_train)          # Inference
-
-### SSRnet ###
 
 def Conv3d_Block(x, filters):
     y = tf.keras.layers.Conv3D(filters, (3, 3, 3), padding='same')(x)
-    y = tf.keras.layers.LeakyReLU(negative_slope=0.10)(y)
+    y = tf.keras.layers.LeakyReLU(negative_slope=0.1)(y)
     y = tf.keras.layers.LayerNormalization()(y)
     return y
 
+Support = PositionNetPlus.output
+Ydd0    = PositionNetPlus.input
+Ydd     = tf.keras.layers.Reshape((Mt*Nv*2, 1))(Ydd0)
+
+h_ADD  = Initial_Sprase_H_ADD_Layer()([Support, Ydd])           # Initial h_ADD = (A_pinv * yDD) .* Support
+h_ADD0 = tf.keras.layers.Rescaling(1.0, offset=0.0)(h_ADD)
+
+for i in range(NL):
+    h_ADD, h_ADD0 = Learned_ISP_SL0_Layer()([h_ADD, h_ADD0, Ydd])
+
+H_ADD = tf.keras.layers.Reshape((2, Nt, Nv, Mt))(h_ADD)
+H_ADD = tf.keras.layers.Permute((4, 3, 2, 1))(H_ADD)
+HDD_real, HDD_imag = tf.keras.ops.split(H_ADD, 2, axis=-1)
+# HDD_real, HDD_imag = tf.keras.layers.Lambda(lambda x: tf.split(x, 2, axis=-1))(H_ADD)
+
 # Model's Inputs
-HDD_real = tf.keras.Input(shape=(Mt, Nv, Nt, 1))
-HDD_imag = tf.keras.Input(shape=(Mt, Nv, Nt, 1))
+# HDD_real = tf.keras.Input(shape=(Mt, Nv, Nt, 1))
+# HDD_imag = tf.keras.Input(shape=(Mt, Nv, Nt, 1))
 
 # Real part of 3D channel matrix
-HDD_OTFSr = Conv3d_Block(HDD_real,  Nc)
-HDD_OTFSr = Conv3d_Block(HDD_OTFSr, Nc)
-HDD_OTFSr = Conv3d_Block(HDD_OTFSr, Nc)
-HDD_OTFSr = Conv3d_Block(HDD_OTFSr, Nc)
+HDD_OTFSr = Conv3d_Block(HDD_real,  Nf)
+HDD_OTFSr = Conv3d_Block(HDD_OTFSr, Nf)
+HDD_OTFSr = Conv3d_Block(HDD_OTFSr, Nf)
+HDD_OTFSr = Conv3d_Block(HDD_OTFSr, Nf)
 
 HDD_OTFSr = tf.keras.layers.Subtract()([HDD_real, HDD_OTFSr])
 
-HDD_OTFSr = Conv3d_Block(HDD_OTFSr, Nc)
-HDD_OTFSr = Conv3d_Block(HDD_OTFSr, Nc)
-HDD_OTFSr = Conv3d_Block(HDD_OTFSr, Nc)
-HDD_OTFSr = Conv3d_Block(HDD_OTFSr, Nc)
+HDD_OTFSr = Conv3d_Block(HDD_OTFSr, Nf)
+HDD_OTFSr = Conv3d_Block(HDD_OTFSr, Nf)
+HDD_OTFSr = Conv3d_Block(HDD_OTFSr, Nf)
+HDD_OTFSr = Conv3d_Block(HDD_OTFSr, Nf)
 HDD_OTFSr = tf.keras.layers.Conv3D(1, (3, 3, 3), padding='same')(HDD_OTFSr)
 CH_ADD_real = tf.keras.layers.Subtract()([HDD_real, HDD_OTFSr])
 
 # Imaginary part of 3D channel matrix
-HDD_OTFSi = Conv3d_Block(HDD_imag,  Nc)
-HDD_OTFSi = Conv3d_Block(HDD_OTFSi, Nc)
-HDD_OTFSi = Conv3d_Block(HDD_OTFSi, Nc)
-HDD_OTFSi = Conv3d_Block(HDD_OTFSi, Nc)
+HDD_OTFSi = Conv3d_Block(HDD_imag,  Nf)
+HDD_OTFSi = Conv3d_Block(HDD_OTFSi, Nf)
+HDD_OTFSi = Conv3d_Block(HDD_OTFSi, Nf)
+HDD_OTFSi = Conv3d_Block(HDD_OTFSi, Nf)
 
 HDD_OTFSi = tf.keras.layers.Subtract()([HDD_imag, HDD_OTFSi])
 
-HDD_OTFSi = Conv3d_Block(HDD_OTFSi, Nc)
-HDD_OTFSi = Conv3d_Block(HDD_OTFSi, Nc)
-HDD_OTFSi = Conv3d_Block(HDD_OTFSi, Nc)
-HDD_OTFSi = Conv3d_Block(HDD_OTFSi, Nc)
+HDD_OTFSi = Conv3d_Block(HDD_OTFSi, Nf)
+HDD_OTFSi = Conv3d_Block(HDD_OTFSi, Nf)
+HDD_OTFSi = Conv3d_Block(HDD_OTFSi, Nf)
+HDD_OTFSi = Conv3d_Block(HDD_OTFSi, Nf)
 HDD_OTFSi = tf.keras.layers.Conv3D(1, (3, 3, 3), padding='same')(HDD_OTFSi)
 CH_ADD_imag = tf.keras.layers.Subtract()([HDD_imag, HDD_OTFSi])
 
 # 3D sparse channel matrix
 CH_ADD = tf.keras.layers.Concatenate(axis=-1)([CH_ADD_real, CH_ADD_imag])
+# CH_ADD = tf.keras.layers.Concatenate(axis=-1)([HDD_real, HDD_imag])
 
-SSRnet = tf.keras.models.Model([HDD_real, HDD_imag], CH_ADD)
+SSRnet = tf.keras.models.Model(PositionNetPlus.input, CH_ADD)
 
 SSRnet.summary()
 
-SSRnet.compile(optimizer=tf.keras.optimizers.AdamW(),
-              loss=[log_NMSE],
-              metrics=['mse'])
+SSRnet.compile(optimizer=tf.keras.optimizers.AdamW(learning_rate=0.001),
+               loss=[log_NMSE],
+               metrics=['mse'])
 
-SSRnet_history = SSRnet.fit([HDD_real_train, HDD_imag_train], CH_ADD_train, validation_split=0.20, epochs=15, callbacks=[learning_rate_schedule])
+SSRnet_history = SSRnet.fit(yDD_train, CH_ADD_train, validation_split=0.20, epochs=25) # , callbacks=[learning_rate_schedule])
 
 SSRnet.save("SSRnet.keras")
 
