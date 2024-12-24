@@ -4,7 +4,7 @@ The Python and MATLAB codes have been used for the experiments and results prese
 
 The Python codes are TensorFlow/Keras models for PositionNet+ and SSRnet. These codes are written by the authors of [1]. 
 
-The MATLAB codes for simulating MIMO-OTFS systems, have been written by the authors of the following paper [2] downloaded from the following website: 
+The MATLAB codes used for data generation of MIMO-OTFS systems, have been written by the authors of the following paper [2] downloaded from the following website: 
 https://oa.ee.tsinghua.edu.cn/dailinglong/. 
 If you use this MATLAB code package, please cite [2]:
 
