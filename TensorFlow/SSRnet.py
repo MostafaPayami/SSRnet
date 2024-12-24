@@ -25,7 +25,6 @@ yDD = sio.loadmat('yDD_Nt64_0p20.mat')['yDD']                  # Delay-Doppler d
 Phi = sio.loadmat('Phi_Nt64_0p20.mat')['Phi']                  # Sensing matrix
 CH_ADD_train = sio.loadmat('CH_ADD_Nt64_0p20.mat')['CH_ADD']   # Delay-Doppler domain 3D sparse channel matrix
 
-
 A        = tf.constant(Phi, dtype=tf.complex64)
 A_AH     = tf.linalg.matmul(A, A, adjoint_b=True) + (0.0001 + 0.0j) * tf.eye(Mt*Nv, dtype=tf.complex64)
 A_AH_inv = tf.linalg.inv(A_AH)
@@ -53,7 +52,7 @@ def learning_rate_scheduler(epoch):
 
 learning_rate_schedule = tf.keras.callbacks.LearningRateScheduler(learning_rate_scheduler)
 
-### TensorFlow/Keras Custom Functions and Layers ###
+### Custom Functions and Layers ###
 
 def log_NMSE(y_true, y_pred):
     Dy  = tf.math.square(y_true - y_pred)
@@ -76,86 +75,6 @@ class Permute_and_Negate_Layer(tf.keras.layers.Layer):
         y = tf.concat([permuted[:, 0:1, :] * -1, permuted[:, 1:, :]], axis=1)
         return y
 
-### PositionNet+ ###
-
-# Model's Input
-yDD = tf.keras.Input(shape=(2, Mt*Nv))         # Delay-Doppler domain Observation Vector
-
-yDDr = tf.keras.layers.Reshape((2, Mt*Nv, 1))(yDD)
-yDDr = tf.keras.layers.Conv2D(Nc, (3, 3), padding='same')(yDDr)
-yDDr = tf.keras.layers.LeakyReLU(negative_slope=0.1)(yDDr)
-yDDr = tf.keras.layers.LayerNormalization()(yDDr)
-yDDr = tf.keras.layers.Conv2D(Nc, (3, 3), padding='same')(yDDr)
-yDDr = tf.keras.layers.LeakyReLU(negative_slope=0.1)(yDDr)
-yDDr = tf.keras.layers.LayerNormalization()(yDDr)
-yDDr = tf.keras.layers.Conv2D(Nc, (3, 3), padding='same')(yDDr)
-yDDr = tf.keras.layers.LeakyReLU(negative_slope=0.1)(yDDr)
-yDDr = tf.keras.layers.LayerNormalization()(yDDr)
-yDDr = tf.keras.layers.Dense(Nc)(yDDr)
-yDDr = tf.keras.layers.BatchNormalization()(yDDr)
-yDDr = tf.keras.layers.Dense(1)(yDDr)
-yDDr = tf.keras.layers.Reshape((2, Mt*Nv))(yDDr)
-
-yDDi = Permute_and_Negate_Layer()(yDD)
-yDDi = tf.keras.layers.Reshape((2, Mt*Nv, 1))(yDDi)
-yDDi = tf.keras.layers.Conv2D(Nc, (3, 3), padding='same')(yDDi)
-yDDi = tf.keras.layers.LeakyReLU(negative_slope=0.1)(yDDi)
-yDDi = tf.keras.layers.LayerNormalization()(yDDi)
-yDDi = tf.keras.layers.Conv2D(Nc, (3, 3), padding='same')(yDDi)
-yDDi = tf.keras.layers.LeakyReLU(negative_slope=0.1)(yDDi)
-yDDi = tf.keras.layers.LayerNormalization()(yDDi)
-yDDi = tf.keras.layers.Conv2D(Nc, (3, 3), padding='same')(yDDi)
-yDDi = tf.keras.layers.LeakyReLU(negative_slope=0.1)(yDDi)
-yDDi = tf.keras.layers.LayerNormalization()(yDDi)
-yDDi = tf.keras.layers.Dense(Nc)(yDDi)
-yDDi = tf.keras.layers.BatchNormalization()(yDDi)
-yDDi = tf.keras.layers.Dense(1)(yDDi)
-yDDi = tf.keras.layers.Reshape((2, Mt*Nv))(yDDi)
-
-# Feature Extraction (Support Recovery)
-F11 = tf.keras.layers.Dense(Mt*Nv*Nt)(yDDr)               # Complex Dense layer
-F11 = tf.keras.layers.Dropout(0.25)(F11)
-F21 = tf.keras.layers.Dense(Mt*Nv*Nt)(yDDi)
-F21 = tf.keras.layers.Dropout(0.25)(F21)
-F1  = tf.keras.layers.Add()([F11, F21])
-Feature = tf.keras.ops.abs(F1)                            # Absolute Value layer
-Feature = tf.keras.layers.AveragePooling1D(pool_size=(2))(Feature)
-Feature = tf.keras.layers.Reshape((Mt, Nv, Nt, 1))(Feature)
-Feature = tf.keras.layers.Conv3D(Nc, (3, 3, 3), padding='same')(Feature)
-Feature = tf.keras.layers.Conv3D(Nc, (3, 3, 3), padding='same')(Feature)
-Feature = tf.keras.layers.Conv3D(Nc, (3, 3, 3), padding='same')(Feature)
-Feature = tf.keras.layers.LayerNormalization()(Feature)
-Feature = tf.keras.layers.BatchNormalization(axis=1)(Feature)
-Feature = tf.keras.layers.Rescaling(2.5, offset=0)(Feature)
-
-Position = tf.keras.layers.Softmax(axis=1)(Feature)    # Softmax layer
-
-Position = tf.keras.layers.Dense(Nc)(Position)
-Position = tf.keras.layers.Dense(1)(Position)
-Position = tf.keras.layers.Reshape((Mt, Nv, Nt))(Position)
-Position = tf.keras.layers.Dense(Nc)(Position)
-Position = tf.keras.layers.Dense(1)(Position)
-Position = tf.keras.layers.Reshape((Mt, Nv))(Position)
-Position = tf.keras.layers.Dense(Nc)(Position)
-Position = tf.keras.layers.Dense(1, activation="sigmoid")(Position)
-# Position = tf.keras.layers.Dense(1)(Position)
-# Position = tf.keras.layers.Reshape((Mt,))(Position)
-# Position = tf.keras.layers.Rescaling(5.0, offset=0.0)(Position)        # Making sigmoid function sharp
-# Position = tf.keras.activations.sigmoid(Position)
-
-PositionNetPlus = tf.keras.models.Model(yDD, Position)
-
-PositionNetPlus.summary()
-
-PositionNetPlus.compile(optimizer=tf.keras.optimizers.AdamW(),
-                        loss=[tf.keras.losses.CosineSimilarity()],   # Weighted_Binary_CrossEntropy
-                        metrics=['mse'])  # tf.keras.metrics.BinaryCrossentropy()
-
-PN_history = PositionNetPlus.fit(yDD_train, Position_train, validation_split=0.20,
-                                 epochs=15, callbacks=[learning_rate_schedule])
-
-PositionNetPlus.save("PositionNetPlus.keras")
-
 ### PositionNet+ with Learned ISP-SL0 ###
 
 PositionNetPlus = tf.keras.models.load_model("PositionNetPlus.keras",
@@ -164,11 +83,12 @@ PositionNetPlus = tf.keras.models.load_model("PositionNetPlus.keras",
                                          safe_mode=False)
 PositionNetPlus.trainable = False
 
-### Learned ISP-SL0 ###
+### Learned ISP-SL0
 
 class Initial_Sprase_H_ADD_Layer(tf.keras.layers.Layer):
     def __init__(self, **kwargs):
         super(Initial_Sprase_H_ADD_Layer, self).__init__(**kwargs)
+      
     def call(self, inputs):
         I, y = inputs
         I  = tf.math.round(I)                  # Sparse zero-one vector (Delay dimension)
