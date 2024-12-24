@@ -99,7 +99,7 @@ PositionNetPlus.save("PositionNetPlus.keras")
 
 plt.plot(PN_history.history['loss'], label='Train Loss')
 plt.plot(PN_history.history['val_loss'], label='Validation Loss')
-plt.title('Training Result of PositionNet+')
+plt.title('Training Result of PositionNet+') 
 plt.ylabel('Negated Cosine Similarity')
 plt.xlabel('Epoch')
 plt.legend(['Train', 'Test'], loc='upper right')
