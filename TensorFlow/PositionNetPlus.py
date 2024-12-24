@@ -98,7 +98,7 @@ Feature = tf.keras.layers.Conv3D(Nc, (3, 3, 3), padding='same')(Feature)
 Feature = tf.keras.layers.Conv3D(Nc, (3, 3, 3), padding='same')(Feature)
 Feature = tf.keras.layers.LayerNormalization()(Feature)
 Feature = tf.keras.layers.BatchNormalization(axis=1)(Feature)
-Feature = tf.keras.layers.Rescaling(2.5, offset=0)(Feature)
+Feature = tf.keras.layers.Rescaling(2.5, offset=0)(Feature) 
 
 Position = tf.keras.layers.Softmax(axis=1)(Feature)    # Softmax layer
 Position = tf.keras.layers.Dense(Nc)(Position)
