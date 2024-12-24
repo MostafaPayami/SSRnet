@@ -8,13 +8,13 @@ import matplotlib.pyplot as plt
 
 Nt = 16            # Number of transmit antennas
 Nfft = 1024        # FFT size of base modem
-M = 600            # OTFS frame length (delay)
-N = 10             # OTFS frame length (Doppler)
-eta = 0.20         # Pilot overhead
-Mt = 128           # Number of pilots along delay dimension
+M  = 600           # OTFS frame length (delay)
+N  = 10            # OTFS frame length (Doppler)
+eta = 0.15         # Pilot overhead
+Mt = 96            # Number of pilots along delay dimension
 Nv = 10            # Number of pilots along Doppler dimension
-Nc = 64            # Number of filters (feature maps)
-alpha = 0.9        # Binary Cross-Entropy weight
+Nc = 32            # Number of filters (feature maps)
+alpha = 0.8        # Binary Cross-Entropy weight
 
 ### Loading Datasets ###
 
@@ -25,9 +25,9 @@ Position_train = sio.loadmat('Position_Nt64_0p20.mat', mat_dtype=True)['Position
 ### Learning Rate Schedule ###
 
 def learning_rate_scheduler(epoch):
-    if epoch < 8:
+    if epoch < 12:
         return 1e-3
-    elif epoch < 10:
+    elif epoch < 14:
         return 1e-4
     else:
         return 1e-5
@@ -93,7 +93,7 @@ PositionNetPlus.compile(optimizer=tf.keras.optimizers.AdamW(),
               loss=[tf.keras.losses.CosineSimilarity()],       # Weighted_Binary_CrossEntropy
               metrics=['mse'])
 
-PN_history = PositionNetPlus.fit([yDD_real_train, yDD_imag_train], Position_train, validation_split=0.20, epochs=12, callbacks=[learning_rate_schedule])
+PN_history = PositionNetPlus.fit([yDD_real_train, yDD_imag_train], Position_train, validation_split=0.20, epochs=15, callbacks=[learning_rate_schedule])
 
 PositionNetPlus.save("PositionNetPlus.keras")
 
