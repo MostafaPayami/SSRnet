@@ -16,7 +16,6 @@ Mt = 96            # Number of pilots along delay dimension
 Nv = 10            # Number of pilots along Doppler dimension
 Nc = 32            # Number of filters (feature maps)
 Nf = 32            # Number of filters (feature maps)
-NL = 10            # Number of Learned ISP-SL0 layers
 kappa = 0.8        # Binary Cross-Entropy weight
 # Binary Cross-Entropy Weights based on Probabilities of Occurrence of Nonzero Indices
 # kappa = tf.constant(tf.concat([[0.5], 0.254 * tf.math.pow(0.952, tf.range(1, Mt, dtype=tf.float32))], axis=0))
