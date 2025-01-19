@@ -3,7 +3,7 @@
 
 import tensorflow as tf
 import numpy as np
-import scipy.io as sio
+import scipy.io as sio 
 import matplotlib.pyplot as plt
 
 Nt = 32            # Number of transmit antennas
