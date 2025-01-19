@@ -115,7 +115,7 @@ Position = tf.keras.layers.Reshape((Mt, Nv, Nt))(Position)
 Position = tf.keras.layers.Dense(Nc)(Position)
 Position = tf.keras.layers.Dense(1)(Position)
 Position = tf.keras.layers.Reshape((Mt, Nv))(Position)
-Position = tf.keras.layers.Dense(32)(Position)
+Position = tf.keras.layers.Dense(Nc)(Position)
 Position = tf.keras.layers.Dense(1, activation="sigmoid")(Position)
 Position = tf.keras.layers.Reshape((Mt,))(Position)
 
