@@ -1,6 +1,6 @@
 The Python and MATLAB codes have been used for the experiments and results presented in the following paper [1]. 
 
-[1] M. Payami, and S. D. Blostein, “Sparse Signal Recovery Neural Network with Application to High-Mobility Massive MIMO-OTFS Communication Systems” submitted to IEEE Trans. Veh. Tech., 2024.
+[1] M. Payami, and S. D. Blostein, “Sparse Signal Recovery Neural Network with Application to High-Mobility Massive MIMO-OTFS Communication Systems” IEEE Trans. Veh. Tech., 2025. (Accepted Paper)
 
 The Python codes are TensorFlow/Keras models for PositionNet+ and SSRnet. These codes are written by the authors of [1]. 
 
