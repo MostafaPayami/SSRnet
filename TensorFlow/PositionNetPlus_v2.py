@@ -58,6 +58,7 @@ class Permute_and_Negate_Layer(tf.keras.layers.Layer):
         return y
 
 # Obtain large nonzero indices with a low probability of occurrence using 3D-OMP
+# Note: This function needs to be tested for compatibility etc.
 def Refine_3D_OMP(y_DD, Position_Estimated):
     PositionNN = tf.math.round(Position_Estimated)     # Support along the Delay dimension as a zero-one sparse vector
     K0 = tf.math.reduce_sum(PositionNN)
