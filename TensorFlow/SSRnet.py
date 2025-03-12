@@ -113,7 +113,7 @@ class Learned_ISP_SL0_Layer(tf.keras.layers.Layer):
         super(Learned_ISP_SL0_Layer, self).build(input_shape)
 
     def Exponential_Shrinkage(self, z, I):
-        sigmaPN = tf.nn.relu(self.sigma) * (1.0 - tf.math.sigmoid(self.alpha) * I) + 1e-7    # Lower threshold for elements at known nonzero indices
+        sigmaPN = tf.nn.relu(self.sigma) * (1.0 - tf.math.sigmoid(self.alpha) * I) + 1e-7    # Lower threshold for elements at nonzero indices detected by PositionNet+
         z  = tf.reshape(z, shape=(-1, 2, Mt*Nv*Nt))
         r  = tf.math.reduce_sum(tf.math.square(z), axis=1, keepdims=True)
         fz = z * (tf.nn.relu(self.a1) - tf.nn.relu(self.a2) * tf.math.exp(-r / (sigmaPN ** 2)))
