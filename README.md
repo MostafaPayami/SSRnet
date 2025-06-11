@@ -1,3 +1,5 @@
+# Sparse Signal Recovery Neural Network
+
 The Python and MATLAB codes have been used for the experiments and results presented in the following paper [1]. 
 
 [1] M. Payami, and S. D. Blostein, “Sparse Signal Recovery Neural Network with Application to High-Mobility Massive MIMO-OTFS Communication Systems” IEEE Trans. Veh. Tech., 2025. (Accepted Paper)
